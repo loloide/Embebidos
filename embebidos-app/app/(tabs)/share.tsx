@@ -13,7 +13,7 @@ import {
     TouchableOpacity,
 } from "react-native";
 
-const socketEndpoint = "http://192.168.1.43:3000";
+const socketEndpoint = "http://192.168.80.22:3000";
 
 export default function StreamScreen() {
     const [hasConnection, setConnection] = useState(false);
@@ -186,7 +186,7 @@ export default function StreamScreen() {
             </View>
             <Text style={styles.coordinates}>
                 {location
-                    ? `Lat: ${location.coords.latitude.toFixed(6)}\nLon: ${location.coords.longitude.toFixed(6)}\nAlt: ${location.coords.altitude.toFixed(6)}`
+                    ? `Lat: ${location.coords.latitude}\nLon: ${location.coords.longitude}\nAlt: ${location.coords.altitude}`
                     : "Awaiting GPS..."}
             </Text>
         </View>

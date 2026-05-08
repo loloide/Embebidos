@@ -2,7 +2,7 @@ import { Image } from "expo-image";
 import { useEffect, useState, useRef } from "react";
 import io, { Socket } from "socket.io-client";
 import * as Location from "expo-location";
-import * as FileSystem from "expo-file-system/legacy";
+import { WebView } from "react-native-webview";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
     Platform,
@@ -12,8 +12,15 @@ import {
     Button,
     TouchableOpacity,
 } from "react-native";
+import {
+  FilamentScene,
+  FilamentView,
+  DefaultLight,
+  Model,
+  Camera,
+} from "react-native-filament";
 
-const socketEndpoint = "http://192.168.1.43:3000";
+const socketEndpoint = "http://192.168.80.22:3000";
 
 export default function RecordScreen() {
     const [hasConnection, setConnection] = useState(false);
@@ -43,9 +50,10 @@ export default function RecordScreen() {
     }, []);
 
     return (
-        <View style={styles.container}>
-            <Text>map goes here!!</Text>
-        </View>
+        <WebView
+            style={styles.container}
+            source={{ uri: "http://192.168.80.22:3000" }}
+        />
     );
 }
 
