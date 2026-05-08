@@ -20,7 +20,7 @@ import {
   Camera,
 } from "react-native-filament";
 
-const socketEndpoint = "http://192.168.80.22:3000";
+const socketEndpoint = "https://embebidos-uumb.onrender.com/";
 
 export default function RecordScreen() {
     const [hasConnection, setConnection] = useState(false);
@@ -52,7 +52,7 @@ export default function RecordScreen() {
     return (
         <WebView
             style={styles.container}
-            source={{ uri: "http://192.168.80.22:3000" }}
+            source={{ uri: "https://embebidos-uumb.onrender.com/" }}
         />
     );
 }

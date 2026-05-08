@@ -265,10 +265,11 @@ function touchMoved() {
             z: -Math.sin(camAngleX),
         };
 
+        // Apply movement (Must match mouseDragged logic)
         camTarget.x +=
-            right.x * -deltaX * panSpeed - forward.x * -deltaY * panSpeed;
+            right.x * -deltaX * panSpeed - forward.x * deltaY * panSpeed;
         camTarget.z +=
-            right.z * deltaX * panSpeed - forward.z * deltaY * panSpeed;
+            right.z * -deltaX * panSpeed - forward.z * deltaY * panSpeed;
 
         lastTouchX = touches[0].x;
         lastTouchY = touches[0].y;

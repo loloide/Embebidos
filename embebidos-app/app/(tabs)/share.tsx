@@ -13,7 +13,7 @@ import {
     TouchableOpacity,
 } from "react-native";
 
-const socketEndpoint = "http://192.168.80.22:3000";
+const socketEndpoint = "https://embebidos-uumb.onrender.com";
 
 export default function StreamScreen() {
     const [hasConnection, setConnection] = useState(false);
