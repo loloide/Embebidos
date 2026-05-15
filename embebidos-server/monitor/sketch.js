@@ -5,304 +5,216 @@ document.oncontextmenu = () => false;
 socket = io.connect(window.location.href);
 
 var paths = [];
-function preload() {
+var pathsDirty = true;
+
+// --- Cached geometry built once per paths update ---
+let cachedTriangles = null; // { r, g, b, flat: [x,y,z], raised: [x,y,z] }[]
+
+function fetchPaths() {
     fetch("/api/paths")
-        .then((response) => response.json())
+        .then((r) => r.json())
         .then((data) => {
             paths = data;
-            console.log("Paths loaded:", paths);
+            pathsDirty = true;
         })
         .catch((err) => console.error("Error loading paths:", err));
 }
 
+function preload() { fetchPaths(); }
+
 let checkbox;
 
 function setup() {
-    createCanvas(window.innerWidth, window.innerHeight*0.9, WEBGL);
+    createCanvas(window.innerWidth, window.innerHeight, WEBGL);
     angleMode(DEGREES);
-    //debugMode();
     checkbox = createCheckbox("flat");
+    checkbox.position(0, 100);
+    checkbox.changed(() => { pathsDirty = true; });
 
-    socket.on("point", function () {
-        fetch("/api/paths")
-            .then((response) => response.json())
-            .then((data) => {
-                paths = data;
-                console.log("Paths loaded:", paths);
-            })
-            .catch((err) => console.error("Error loading paths:", err));
-    });
+    socket.on("point", fetchPaths);
 }
+
 // Camera parameters
 let camDistance = 700;
-let camAngleX = 0; // Rotation around target (azimuth)
-let camAngleY = -Math.PI / 6; // Tilt angle (elevation)
+let camAngleX = 0;
+let camAngleY = -Math.PI / 6;
 let camTarget = { x: 0, y: 0, z: 0 };
 
-// Mouse state
 let isDragging = false;
 let isRightDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
 
-// Camera constraints
 const minDistance = 100;
 const maxDistance = 2000;
-const minTilt = -Math.PI / 2 + 0.1; // Almost straight down
-const maxTilt = 0; // Horizon level
+const minTilt = -Math.PI / 2 + 0.1;
+const maxTilt = 0;
+
+// --- Rebuild cached geometry when paths change ---
+function rebuildCache() {
+    if (!paths.length) { cachedTriangles = null; return; }
+
+    const flat = checkbox.checked();
+    const vertexSoup = [];
+    for (const p of paths) for (const v of p.path) vertexSoup.push(v);
+
+    // Safe min/max without spread (avoids stack overflow on large arrays)
+    let minY = Infinity, maxY = -Infinity;
+    for (const v of vertexSoup) {
+        if (v.altitude < minY) minY = v.altitude;
+        if (v.altitude > maxY) maxY = v.altitude;
+    }
+    const altRange = maxY - minY || 1;
+
+    const delaunay = d3.Delaunay.from(vertexSoup.map((v) => [v.latitude, v.longitude]));
+    const triangles = delaunay.triangles;
+
+    // Precompute color + position for every triangle vertex
+    cachedTriangles = new Array(triangles.length);
+    for (let i = 0; i < triangles.length; i++) {
+        const v = vertexSoup[triangles[i]];
+        const t = (v.altitude - minY) / altRange;
+
+        // Green → yellow → brown
+        let r, g, b;
+        if (t < 0.5) {
+            const s = t * 2;
+            r = Math.round(34  + s * (210 - 34));
+            g = Math.round(139 + s * (180 - 139));
+            b = Math.round(34  + s * (0   - 34));
+        } else {
+            const s = (t - 0.5) * 2;
+            r = Math.round(210 + s * (101 - 210));
+            g = Math.round(180 + s * (67  - 180));
+            b = Math.round(0   + s * (33  - 0));
+        }
+
+        const px = -v.latitude * 100000 - 41.137 * 100000;
+        const pz =  v.longitude * (100000 * Math.cos(v.latitude)) + 100000 * 71.295 * Math.cos(v.latitude);
+        const py = flat ? 0 : (-v.altitude * 0.898 + 700);
+
+        cachedTriangles[i] = { r, g, b, px, py, pz };
+    }
+
+    pathsDirty = false;
+}
 
 function draw() {
-    //orbitControl();
-    background(50);
+    if (pathsDirty) rebuildCache();
+
+    background(100);
+
     push();
-    noStroke()
+    noStroke();
     fill("#00ffff");
     translate(0, 1, 0);
     rotateX(90);
     plane(10000);
     pop();
 
-    const camX =
-        camTarget.x + camDistance * Math.cos(camAngleY) * Math.sin(camAngleX);
+    const camX = camTarget.x + camDistance * Math.cos(camAngleY) * Math.sin(camAngleX);
     const camY = camTarget.y + camDistance * Math.sin(camAngleY);
-    const camZ =
-        camTarget.z + camDistance * Math.cos(camAngleY) * Math.cos(camAngleX);
-
-    // Set camera
+    const camZ = camTarget.z + camDistance * Math.cos(camAngleY) * Math.cos(camAngleX);
     camera(camX, camY, camZ, camTarget.x, camTarget.y, camTarget.z, 0, 1, 0);
 
-    for (let path of paths) {
-        drawPath(path, "#000");
-    }
-
-    drawSurface(paths, 100);
-
+    for (const path of paths) drawPath(path);
+    drawSurface();
 }
 
-function drawSurface(vertexData, fillColor) {
-    let vertexSoup = vertexData.flatMap((p) => p.path);
-
-    let yValues = vertexSoup.map((v) => v.altitude);
-    let minY = Math.min(...yValues);
-    let maxY = Math.max(...yValues);
-
-    const delaunay = d3.Delaunay.from(
-        vertexSoup.map((v) => [v.latitude, v.longitude]),
-    );
-    let triangles = delaunay.triangles;
+function drawSurface() {
+    if (!cachedTriangles) return;
     push();
+    noStroke();
     beginShape(TRIANGLES);
-    for (let i = 0; i < triangles.length; i++) {
-        let index = triangles[i];
-        let v = vertexSoup[index];
-
-        // Map altitude to 0.0 - 1.0
-        let t = map(v.altitude, minY, maxY, 0, 1);
-
-        // Multi-stop gradient: green → yellow → brown
-        let gradColor;
-        if (t < 0.5) {
-            // green → yellow
-            gradColor = lerpColor(color(34, 139, 34), color(210, 180, 0), t * 2);
-        } else {
-            // yellow → brown
-            gradColor = lerpColor(color(210, 180, 0), color(101, 67, 33), (t - 0.5) * 2);
-        }
-
-        fill(gradColor);
-        noStroke();
-        if (checkbox.checked()) {
-            vertex(
-                -v.latitude * 100000 - 41.137 * 100000,
-                0,
-                v.longitude * (100000 * Math.cos(v.latitude)) +
-                    100000 * 71.295 * Math.cos(v.latitude),
-            );
-        } else {
-            vertex(
-                -v.latitude * 100000 - 41.137 * 100000,
-                -v.altitude * 0.898 + 700,
-                v.longitude * (100000 * Math.cos(v.latitude)) +
-                    100000 * 71.295 * Math.cos(v.latitude),
-            );
-        }
+    for (const c of cachedTriangles) {
+        fill(c.r, c.g, c.b);
+        vertex(c.px, c.py, c.pz);
     }
     endShape();
     pop();
 }
-function drawPath(dataObj, strokeColor) {
+
+function drawPath(dataObj) {
     push();
     noFill();
-    stroke(strokeColor);
+    stroke("#000");
     strokeWeight(2);
+    const flat = checkbox.checked();
 
     beginShape();
-    for (let p of dataObj.path) {
-        if (checkbox.checked()) {
-            vertex(
-                -p.latitude * 100000 - 41.137 * 100000,
-                0,
-                p.longitude * (100000 * Math.cos(p.latitude)) +
-                    100000 * 71.295 * Math.cos(p.latitude),
-            );
-        } else {
-            vertex(
-                -p.latitude * 100000 - 41.137 * 100000,
-                -p.altitude * 0.898 + 700,
-                p.longitude * (100000 * Math.cos(p.latitude)) +
-                    100000 * 71.295 * Math.cos(p.latitude),
-            );
-        }
+    for (const p of dataObj.path) {
+        const px = -p.latitude * 100000 - 41.137 * 100000;
+        const pz =  p.longitude * (100000 * Math.cos(p.latitude)) + 100000 * 71.295 * Math.cos(p.latitude);
+        const py = flat ? 0 : (-p.altitude * 0.898 + 700);
+        vertex(px, py, pz);
     }
     endShape();
     pop();
 }
+
+// --- Input handlers (unchanged) ---
 function mousePressed(event) {
-    if (event && event.button === 2) {
-        // Right click
-        isRightDragging = true;
-    } else {
-        // Left click
-        isDragging = true;
-    }
+    if (event && event.button === 2) isRightDragging = true;
+    else isDragging = true;
     lastMouseX = mouseX;
     lastMouseY = mouseY;
     return false;
 }
-
-function mouseReleased() {
-    isDragging = false;
-    isRightDragging = false;
-}
-
+function mouseReleased() { isDragging = false; isRightDragging = false; }
 function mouseDragged() {
     const deltaX = mouseX - lastMouseX;
     const deltaY = mouseY - lastMouseY;
-
     if (isRightDragging) {
-        // Left drag - rotate around target (orbit)
         camAngleX += deltaX * 0.005;
         camAngleY = constrain(camAngleY + deltaY * 0.01, minTilt, maxTilt);
     } else if (isDragging) {
-        // Right drag - pan the target point
         const panSpeed = camDistance * 0.001;
-
-        // Calculate pan direction based on camera orientation
-        const forward = {
-            x: Math.sin(camAngleX),
-            z: Math.cos(camAngleX),
-        };
-        const right = {
-            x: Math.cos(camAngleX),
-            z: -Math.sin(camAngleX),
-        };
-
-        camTarget.x +=
-            right.x * -deltaX * panSpeed - forward.x * deltaY * panSpeed;
-        camTarget.z +=
-            right.z * -deltaX * panSpeed - forward.z * deltaY * panSpeed;
+        const forward = { x: Math.sin(camAngleX), z: Math.cos(camAngleX) };
+        const right   = { x: Math.cos(camAngleX), z: -Math.sin(camAngleX) };
+        camTarget.x += right.x * -deltaX * panSpeed - forward.x * deltaY * panSpeed;
+        camTarget.z += right.z * -deltaX * panSpeed - forward.z * deltaY * panSpeed;
     }
     lastMouseX = mouseX;
     lastMouseY = mouseY;
     return false;
 }
-
 function mouseWheel(event) {
-    // Zoom in/out
-    camDistance += event.delta * 0.5;
-    camDistance = constrain(camDistance, minDistance, maxDistance);
+    camDistance = constrain(camDistance + event.delta * 0.5, minDistance, maxDistance);
     return false;
 }
+
+let lastTouchX, lastTouchY, lastTwoFingerDist, lastTwoFingerMidpoint;
 function touchStarted() {
     if (touches.length === 1) {
         lastTouchX = touches[0].x;
         lastTouchY = touches[0].y;
     } else if (touches.length === 2) {
-        lastTwoFingerDist = dist(
-            touches[0].x,
-            touches[0].y,
-            touches[1].x,
-            touches[1].y,
-        );
-        lastTwoFingerMidpoint = {
-            x: (touches[0].x + touches[1].x) / 2,
-            y: (touches[0].y + touches[1].y) / 2,
-        };
-        lastTwoFingerAngle = atan2(
-            touches[1].y - touches[0].y,
-            touches[1].x - touches[0].x,
-        );
+        lastTwoFingerDist = dist(touches[0].x, touches[0].y, touches[1].x, touches[1].y);
+        lastTwoFingerMidpoint = { x: (touches[0].x + touches[1].x) / 2, y: (touches[0].y + touches[1].y) / 2 };
     }
     return false;
 }
-
 function touchMoved() {
     if (touches.length === 1) {
-        // ONE FINGER - PAN the target point
-        const deltaX = touches[0].x - lastTouchX;
-        const deltaY = touches[0].y - lastTouchY;
+        const dx = touches[0].x - lastTouchX;
+        const dy = touches[0].y - lastTouchY;
         const panSpeed = camDistance * 0.001;
-
-        // Calculate pan direction based on camera orientation
-        const forward = {
-            x: Math.sin(camAngleX),
-            z: Math.cos(camAngleX),
-        };
-        const right = {
-            x: Math.cos(camAngleX),
-            z: -Math.sin(camAngleX),
-        };
-
-        // Apply movement (Must match mouseDragged logic)
-        camTarget.x +=
-            right.x * -deltaX * panSpeed - forward.x * deltaY * panSpeed;
-        camTarget.z +=
-            right.z * -deltaX * panSpeed - forward.z * deltaY * panSpeed;
-
+        const forward = { x: Math.sin(camAngleX), z: Math.cos(camAngleX) };
+        const right   = { x: Math.cos(camAngleX), z: -Math.sin(camAngleX) };
+        camTarget.x += right.x * -dx * panSpeed - forward.x * dy * panSpeed;
+        camTarget.z += right.z * -dx * panSpeed - forward.z * dy * panSpeed;
         lastTouchX = touches[0].x;
         lastTouchY = touches[0].y;
     } else if (touches.length === 2) {
-        // TWO FINGERS - detect gesture type
-        const currentDist = dist(
-            touches[0].x,
-            touches[0].y,
-            touches[1].x,
-            touches[1].y,
-        );
-        const currentMidpoint = {
-            x: (touches[0].x + touches[1].x) / 2,
-            y: (touches[0].y + touches[1].y) / 2,
-        };
-
-        // PINCH/ZOOM - distance change
-        const distDelta = currentDist - lastTwoFingerDist;
-        camDistance -= distDelta * 2;
-        camDistance = constrain(camDistance, minDistance, maxDistance);
-
-        // PITCH - vertical movement of midpoint
-        const midpointDeltaY = currentMidpoint.y - lastTwoFingerMidpoint.y;
-        camAngleY = constrain(
-            camAngleY + midpointDeltaY * 0.005,
-            minTilt,
-            maxTilt,
-        );
-
-        // YAW - horizontal movement of midpoint
-        const midpointDeltaX = currentMidpoint.x - lastTwoFingerMidpoint.x;
-        camAngleX += midpointDeltaX * 0.005;
-
-        // Update state
-        lastTwoFingerDist = currentDist;
-        lastTwoFingerMidpoint = currentMidpoint;
+        const currentDist = dist(touches[0].x, touches[0].y, touches[1].x, touches[1].y);
+        const currentMid  = { x: (touches[0].x + touches[1].x) / 2, y: (touches[0].y + touches[1].y) / 2 };
+        camDistance = constrain(camDistance - (currentDist - lastTwoFingerDist) * 2, minDistance, maxDistance);
+        camAngleY   = constrain(camAngleY + (currentMid.y - lastTwoFingerMidpoint.y) * 0.005, minTilt, maxTilt);
+        camAngleX  += (currentMid.x - lastTwoFingerMidpoint.x) * 0.005;
+        lastTwoFingerDist      = currentDist;
+        lastTwoFingerMidpoint  = currentMid;
     }
-
     return false;
 }
-
-function touchEnded() {
-    return false;
-}
-
-function windowResized() {
-    resizeCanvas(windowWidth, windowHeight);
-}
+function touchEnded() { return false; }
+function windowResized() { resizeCanvas(windowWidth, windowHeight); }

@@ -13,24 +13,20 @@ import {
     TouchableOpacity,
 } from "react-native";
 import {
-  FilamentScene,
-  FilamentView,
-  DefaultLight,
-  Model,
-  Camera,
+    FilamentScene,
+    FilamentView,
+    DefaultLight,
+    Model,
+    Camera,
 } from "react-native-filament";
+import { useIsFocused } from "@react-navigation/native";
 
 const socketEndpoint = "https://embebidos-uumb.onrender.com/";
 
 export default function RecordScreen() {
     const [hasConnection, setConnection] = useState(false);
-    const [isRecording, setIsRecording] = useState(false);
-    const [recordedPath, setRecordedPath] = useState<any[]>([]);
-    const [location, setLocation] = useState<Location.LocationObject | null>(
-        null,
-    );
-    const [errorMsg, setErrorMsg] = useState<string | null>(null);
     const socketRef = useRef<Socket | null>(null);
+
 
     useEffect(() => {
         socketRef.current = io(socketEndpoint, {

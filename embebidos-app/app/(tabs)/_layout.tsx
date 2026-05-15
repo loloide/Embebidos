@@ -28,6 +28,7 @@ export default function TabLayout() {
         options={{
           title: 'Map',
           tabBarIcon: ({ color }) => <MaterialCommunityIcons size={28} name="map" color={color} />,
+          unmountOnBlur: true,
         }}
       />
     </Tabs>
