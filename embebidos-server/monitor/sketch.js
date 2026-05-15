@@ -18,11 +18,10 @@ function preload() {
 let checkbox;
 
 function setup() {
-    createCanvas(window.innerWidth, window.innerHeight, WEBGL);
+    createCanvas(window.innerWidth, window.innerHeight*0.9, WEBGL);
     angleMode(DEGREES);
     //debugMode();
     checkbox = createCheckbox("flat");
-    checkbox.position(0, 100);
 
     socket.on("point", function () {
         fetch("/api/paths")
@@ -54,12 +53,13 @@ const maxTilt = 0; // Horizon level
 
 function draw() {
     //orbitControl();
-    background(250);
+    background(50);
     push();
+    noStroke()
     fill("#00ffff");
     translate(0, 1, 0);
     rotateX(90);
-    plane(1000);
+    plane(10000);
     pop();
 
     const camX =
@@ -77,15 +77,6 @@ function draw() {
 
     drawSurface(paths, 100);
 
-    push();
-    translate(-10, -10, 10);
-    rotateWithFrameCount();
-    box(30);
-    pop();
-
-    normalMaterial();
-    //stroke(150);
-    strokeWeight(0.5);
 }
 
 function drawSurface(vertexData, fillColor) {
@@ -100,19 +91,23 @@ function drawSurface(vertexData, fillColor) {
     );
     let triangles = delaunay.triangles;
     push();
-    fill(fillColor);
     beginShape(TRIANGLES);
     for (let i = 0; i < triangles.length; i++) {
         let index = triangles[i];
         let v = vertexSoup[index];
 
-        // 4. Map the Y value to a 0.0 - 1.0 range
-        let interpolationFactor = map(v.altitude, minY, maxY, 800, 850);
+        // Map altitude to 0.0 - 1.0
+        let t = map(v.altitude, minY, maxY, 0, 1);
 
-        // 5. Calculate color: Green (0) to Red (1)
-        let c1 = color(0, 150, 0); // Green
-        let c2 = color(0, 150, 0); // Red
-        let gradColor = lerpColor(c1, c2, interpolationFactor);
+        // Multi-stop gradient: green → yellow → brown
+        let gradColor;
+        if (t < 0.5) {
+            // green → yellow
+            gradColor = lerpColor(color(34, 139, 34), color(210, 180, 0), t * 2);
+        } else {
+            // yellow → brown
+            gradColor = lerpColor(color(210, 180, 0), color(101, 67, 33), (t - 0.5) * 2);
+        }
 
         fill(gradColor);
         noStroke();
@@ -135,7 +130,6 @@ function drawSurface(vertexData, fillColor) {
     endShape();
     pop();
 }
-
 function drawPath(dataObj, strokeColor) {
     push();
     noFill();
@@ -162,12 +156,6 @@ function drawPath(dataObj, strokeColor) {
     }
     endShape();
     pop();
-}
-
-function rotateWithFrameCount() {
-    rotateZ(frameCount);
-    rotateX(frameCount);
-    rotateY(frameCount);
 }
 function mousePressed(event) {
     if (event && event.button === 2) {
