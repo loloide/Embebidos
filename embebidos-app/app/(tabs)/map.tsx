@@ -1,9 +1,7 @@
 import { Image } from "expo-image";
 import { useEffect, useState, useRef } from "react";
 import io, { Socket } from "socket.io-client";
-import * as Location from "expo-location";
 import { WebView } from "react-native-webview";
-import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
     Platform,
     StyleSheet,
@@ -12,14 +10,6 @@ import {
     Button,
     TouchableOpacity,
 } from "react-native";
-import {
-    FilamentScene,
-    FilamentView,
-    DefaultLight,
-    Model,
-    Camera,
-} from "react-native-filament";
-import { useIsFocused } from "@react-navigation/native";
 
 const socketEndpoint = "https://embebidos-uumb.onrender.com/";
 

@@ -1,8 +1,6 @@
-import { Image } from "expo-image";
 import { useEffect, useState, useRef } from "react";
 import io, { Socket } from "socket.io-client";
 import * as Location from "expo-location";
-import * as FileSystem from "expo-file-system/legacy";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import {
     Platform,
@@ -49,14 +47,14 @@ export default function StreamScreen() {
         let subscriber: Location.LocationSubscription | null = null;
 
         async function startWatching() {
-            let { status } = await Location.requestForegroundPermissionsAsync();
+            let { status } = await Location.requestBackgroundPermissionsAsync();
             if (status !== "granted") {
                 setErrorMsg("Permission denied");
                 return;
             }
             subscriber = await Location.watchPositionAsync(
                 {
-                    accuracy: Location.Accuracy.High,
+                    accuracy: Location.Accuracy.BestForNavigation,
                     timeInterval: 10000,
                     distanceInterval: 5,
                 },
@@ -76,7 +74,7 @@ export default function StreamScreen() {
     useEffect(() => {
         let interval: NodeJS.Timeout;
 
-        if ((isStreaming||isRecording) && location) {
+        if ((isStreaming || isRecording) && location) {
             interval = setInterval(() => {
                 const point = {
                     latitude: location.coords.latitude,
@@ -119,7 +117,6 @@ export default function StreamScreen() {
                             </Text>
                         )}
                     </View>
-                    
                 </>
             ) : (
                 <>
