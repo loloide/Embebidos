@@ -2,7 +2,7 @@
 
 var database = window.database;
 var socket;
-document.oncontextmenu = () => false; // Disable right-click context menu
+document.oncontextmenu = () => false;  // Disable right-click context menu
 
 socket = io.connect(window.location.href);
 
@@ -20,7 +20,7 @@ var pathsDirty = true;
 let terrainGeometry = null;
 
 // Projected world-space vertices for every path, stored as [{px, py, pz}[]].
-// One inner array per path. Rebuilt only when paths or flat/3D mode changes.
+// One inner array per path. Rebuilt only when new path data arrives.
 let cachedPathVerts = null;
 
 // When true, cachedPathVerts needs to be rebuilt.
@@ -41,25 +41,15 @@ function preload() {
     fetchPaths();
 }
 
-let checkbox; // p5 checkbox element for toggling flat / 3D mode
-
 /**
  * setup() — p5 hook called once after preload().
- * Creates the WebGL canvas, registers the flat/3D checkbox, and subscribes to
+ * Creates the WebGL canvas filling the full window, then subscribes to
  * real-time "point" events from the server via Socket.IO.
  */
 function setup() {
-    createCanvas(window.innerWidth, window.innerHeight * 0.9, WEBGL);
+    createCanvas(window.innerWidth, window.innerHeight, WEBGL);
     angleMode(DEGREES);
-    frameRate(30); // 30 fps is smooth enough for a 3D viewer and kinder on mobile
-
-    checkbox = createCheckbox("flat");
-    checkbox.changed(() => {
-        // User toggled flat/3D — both geometry caches need a rebuild
-        pathsDirty = true;
-        pathsDirtyCache = true;
-        needsRedraw = true;
-    });
+    frameRate(30);  // 30 fps is smooth enough for a 3D viewer and kinder on mobile
 
     // Re-fetch paths whenever the server broadcasts a new GPS point
     socket.on("point", fetchPaths);
@@ -86,10 +76,10 @@ function fetchPaths() {
 
 // ─── Camera state ────────────────────────────────────────────────────────────
 
-let camDistance = 1000; // Distance from camera to the look-at target
-let camAngleX = Math.PI / 2; // Horizontal orbit angle (radians)
-let camAngleY = -Math.PI / 2; // Vertical tilt angle (radians, clamped below)
-let camTarget = { x: 0, y: 0, z: 0 }; // World-space point the camera orbits around
+let camDistance = 1000;               // Distance from camera to the look-at target
+let camAngleX  = Math.PI / 2;                   // Horizontal orbit angle (radians)
+let camAngleY  = -Math.PI / 2;       // Vertical tilt angle (radians, clamped below)
+let camTarget  = { x: 0, y: 0, z: 0 };  // World-space point the camera orbits around
 
 // Pre-computed trig values for the current camera angles.
 // Recomputed only when _camDirty is true, avoiding four Math calls every frame.
@@ -97,16 +87,16 @@ let _camCosY = Math.cos(camAngleY);
 let _camSinY = Math.sin(camAngleY);
 let _camCosX = Math.cos(camAngleX);
 let _camSinX = Math.sin(camAngleX);
-let _camDirty = true; // Forces an initial trig computation
+let _camDirty = true;  // Forces an initial trig computation
 
 // Camera angle constraints
 const minDistance = 100;
 const maxDistance = 2000;
-const minTilt = -Math.PI / 2 + 0.1; // Just above the horizon
-const maxTilt = 0; // Top-down view
+const minTilt = -Math.PI / 2 + 0.1;  // Just above the horizon
+const maxTilt = 0;                     // Top-down view
 
 // Input tracking for mouse drag
-let isDragging = false;
+let isDragging      = false;
 let isRightDragging = false;
 let lastMouseX = 0;
 let lastMouseY = 0;
@@ -114,25 +104,21 @@ let lastMouseY = 0;
 // ─── Coordinate helpers ──────────────────────────────────────────────────────
 
 /**
- * vertToWorld(v, flat) — converts a GPS point to p5 world coordinates.
+ * vertToWorld(v) — converts a GPS point to p5 world coordinates.
  *
  * Latitude / longitude are projected into a flat local XZ plane centred
  * roughly on Bariloche (-41.137 °S, -71.295 °W). Longitude is scaled by
  * cos(latitude) to correct for meridian convergence at this latitude.
- * Altitude is mapped to the Y axis (negated because p5 Y points down),
- * or zeroed when flat mode is active.
+ * Altitude is mapped to the Y axis (negated because p5 Y points down).
  *
- * @param  {object}  v     — GPS point with {latitude, longitude, altitude}
- * @param  {boolean} flat  — when true, all Y coordinates are forced to 0
- * @returns {object}       — world-space position {px, py, pz}
+ * @param  {object} v  — GPS point with {latitude, longitude, altitude}
+ * @returns {object}   — world-space position {px, py, pz}
  */
-function vertToWorld(v, flat) {
+function vertToWorld(v) {
     return {
-        px: -v.latitude * 100000 - 41.137 * 100000,
-        pz:
-            v.longitude * (100000 * Math.cos(v.latitude)) +
-            100000 * 71.295 * Math.cos(v.latitude),
-        py: flat ? 0 : -v.altitude * 0.898 + 700,
+        px: -v.latitude  * 100000 - 41.137 * 100000,
+        pz:  v.longitude * (100000 * Math.cos(v.latitude)) + 100000 * 71.295 * Math.cos(v.latitude),
+        py: -v.altitude  * 0.898 + 700,
     };
 }
 
@@ -165,7 +151,7 @@ function updateCamTrig() {
  *  5. Store the result in a p5.Geometry so it is uploaded to the GPU once and
  *     rendered in a single draw call via model().
  *
- * Called only when pathsDirty is true (i.e. new data arrived or mode changed).
+ * Called only when pathsDirty is true (i.e. new data arrived).
  */
 function rebuildTerrainGeometry() {
     if (!paths.length) {
@@ -173,37 +159,32 @@ function rebuildTerrainGeometry() {
         return;
     }
 
-    const flat = checkbox.checked();
-
     // Step 1 — collect all points from all paths into one flat array
     const vertexSoup = [];
     for (const p of paths) for (const v of p.path) vertexSoup.push(v);
 
     // Step 2 — altitude range for colour normalisation
-    let minAlt = Infinity,
-        maxAlt = -Infinity;
+    let minAlt = Infinity, maxAlt = -Infinity;
     for (const v of vertexSoup) {
         if (v.altitude < minAlt) minAlt = v.altitude;
         if (v.altitude > maxAlt) maxAlt = v.altitude;
     }
-    const altRange = maxAlt - minAlt || 1; // Guard against flat terrain (div/0)
+    const altRange = maxAlt - minAlt || 1;  // Guard against flat terrain (div/0)
 
     // Step 3 — Delaunay triangulation on the 2D lat/lon projection
-    const delaunay = d3.Delaunay.from(
-        vertexSoup.map((v) => [v.latitude, v.longitude]),
-    );
-    const triangles = delaunay.triangles; // Flat array of vertex indices, 3 per triangle
+    const delaunay = d3.Delaunay.from(vertexSoup.map((v) => [v.latitude, v.longitude]));
+    const triangles = delaunay.triangles;  // Flat array of vertex indices, 3 per triangle
 
     // Step 4 & 5 — build the p5.Geometry
     terrainGeometry = new p5.Geometry(1, 1, function () {
         // Convert all soup vertices to world space and store as p5.Vectors
         const worldVerts = vertexSoup.map((v) => {
-            const w = vertToWorld(v, flat);
+            const w = vertToWorld(v);
             return createVector(w.px, w.py, w.pz);
         });
 
-        this.vertices = worldVerts;
-        this.vertexColors = []; // Parallel array — one RGBA tuple per vertex (floats 0–1)
+        this.vertices     = worldVerts;
+        this.vertexColors = [];  // Parallel array — one RGBA tuple per vertex (floats 0–1)
 
         // Assign altitude-based colours: green (low) → yellow (mid) → brown (high)
         for (let i = 0; i < worldVerts.length; i++) {
@@ -211,15 +192,15 @@ function rebuildTerrainGeometry() {
             const t = (v.altitude - minAlt) / altRange;
             let r, g, b;
             if (t < 0.5) {
-                const s = t * 2; // 0 → 1 in the lower half
-                r = (34 + s * (210 - 34)) / 255; // Dark green → yellow-green
+                const s = t * 2;                              // 0 → 1 in the lower half
+                r = (34  + s * (210 - 34))  / 255;           // Dark green → yellow-green
                 g = (139 + s * (180 - 139)) / 255;
-                b = (34 + s * (0 - 34)) / 255;
+                b = (34  + s * (0   - 34))  / 255;
             } else {
-                const s = (t - 0.5) * 2; // 0 → 1 in the upper half
-                r = (210 + s * (101 - 210)) / 255; // Yellow-green → brown
-                g = (180 + s * (67 - 180)) / 255;
-                b = (0 + s * (33 - 0)) / 255;
+                const s = (t - 0.5) * 2;                     // 0 → 1 in the upper half
+                r = (210 + s * (101 - 210)) / 255;           // Yellow-green → brown
+                g = (180 + s * (67  - 180)) / 255;
+                b = (0   + s * (33  - 0))   / 255;
             }
             this.vertexColors.push(r, g, b, 1);
         }
@@ -242,13 +223,9 @@ function rebuildTerrainGeometry() {
  * Called only when pathsDirtyCache is true.
  */
 function rebuildPathCache() {
-    if (!paths.length) {
-        cachedPathVerts = null;
-        return;
-    }
-    const flat = checkbox.checked();
+    if (!paths.length) { cachedPathVerts = null; return; }
     cachedPathVerts = paths.map((dataObj) =>
-        dataObj.path.map((p) => vertToWorld(p, flat)),
+        dataObj.path.map((p) => vertToWorld(p))
     );
 }
 
@@ -262,13 +239,13 @@ function rebuildPathCache() {
  * main mobile battery saving: we stop burning GPU cycles between interactions.
  */
 function draw() {
-    // Rebuild GPU geometry when paths changed or flat/3D mode was toggled
+    // Rebuild GPU geometry when new path data has arrived
     if (pathsDirty) {
         rebuildTerrainGeometry();
         pathsDirty = false;
     }
 
-    // Rebuild the lightweight path vertex cache for the same reasons
+    // Rebuild the lightweight path vertex cache for the same reason
     if (pathsDirtyCache) {
         rebuildPathCache();
         pathsDirtyCache = false;
@@ -348,16 +325,13 @@ function mousePressed(event) {
     else isDragging = true;
     lastMouseX = mouseX;
     lastMouseY = mouseY;
-    return false; // Prevent default browser behaviour
+    return false;  // Prevent default browser behaviour
 }
 
 /**
  * mouseReleased() — ends any active mouse drag.
  */
-function mouseReleased() {
-    isDragging = false;
-    isRightDragging = false;
-}
+function mouseReleased() { isDragging = false; isRightDragging = false; }
 
 /**
  * mouseDragged() — updates the camera based on mouse movement since last frame.
@@ -372,15 +346,13 @@ function mouseDragged() {
     const deltaY = mouseY - lastMouseY;
 
     if (isRightDragging) {
-        camAngleX += deltaX * 0.005;
-        camAngleY = constrain(camAngleY + deltaY * 0.01, minTilt, maxTilt);
-        _camDirty = true;
+        camAngleX += -deltaX * 0.005;
+        camAngleY  = constrain(camAngleY - deltaY * 0.01, minTilt, maxTilt);
+        _camDirty  = true;
     } else if (isDragging) {
         const panSpeed = camDistance * 0.001;
-        camTarget.x +=
-            _camCosX * -deltaX * panSpeed - _camSinX * deltaY * panSpeed;
-        camTarget.z +=
-            -_camSinX * -deltaX * panSpeed - _camCosX * deltaY * panSpeed;
+        camTarget.x += _camCosX * -deltaX * panSpeed - _camSinX * deltaY * panSpeed;
+        camTarget.z += -_camSinX * -deltaX * panSpeed - _camCosX * deltaY * panSpeed;
     }
 
     lastMouseX = mouseX;
@@ -394,20 +366,16 @@ function mouseDragged() {
  * Clamped between minDistance and maxDistance.
  */
 function mouseWheel(event) {
-    camDistance = constrain(
-        camDistance + event.delta * 0.5,
-        minDistance,
-        maxDistance,
-    );
+    camDistance = constrain(camDistance + event.delta * 0.5, minDistance, maxDistance);
     needsRedraw = true;
     return false;
 }
 
 // ─── Touch input ─────────────────────────────────────────────────────────────
 
-let lastTouchX, lastTouchY; // Last position of a single-finger touch
-let lastTwoFingerDist; // Pixel distance between two fingers on the previous frame
-let lastTwoFingerMidpoint; // Midpoint of the two fingers on the previous frame
+let lastTouchX, lastTouchY;         // Last position of a single-finger touch
+let lastTwoFingerDist;              // Pixel distance between two fingers on the previous frame
+let lastTwoFingerMidpoint;          // Midpoint of the two fingers on the previous frame
 
 /**
  * touchStarted() — records the initial touch position(s) when fingers land.
@@ -420,12 +388,7 @@ function touchStarted() {
         lastTouchX = touches[0].x;
         lastTouchY = touches[0].y;
     } else if (touches.length === 2) {
-        lastTwoFingerDist = dist(
-            touches[0].x,
-            touches[0].y,
-            touches[1].x,
-            touches[1].y,
-        );
+        lastTwoFingerDist = dist(touches[0].x, touches[0].y, touches[1].x, touches[1].y);
         lastTwoFingerMidpoint = {
             x: (touches[0].x + touches[1].x) / 2,
             y: (touches[0].y + touches[1].y) / 2,
@@ -452,30 +415,17 @@ function touchMoved() {
         lastTouchX = touches[0].x;
         lastTouchY = touches[0].y;
     } else if (touches.length === 2) {
-        const currentDist = dist(
-            touches[0].x,
-            touches[0].y,
-            touches[1].x,
-            touches[1].y,
-        );
-        const currentMid = {
+        const currentDist = dist(touches[0].x, touches[0].y, touches[1].x, touches[1].y);
+        const currentMid  = {
             x: (touches[0].x + touches[1].x) / 2,
             y: (touches[0].y + touches[1].y) / 2,
         };
-        camDistance = constrain(
-            camDistance - (currentDist - lastTwoFingerDist) * 2,
-            minDistance,
-            maxDistance,
-        );
-        camAngleY = constrain(
-            camAngleY + (currentMid.y - lastTwoFingerMidpoint.y) * 0.005,
-            minTilt,
-            maxTilt,
-        );
-        camAngleX += (currentMid.x - lastTwoFingerMidpoint.x) * 0.005;
-        _camDirty = true;
-        lastTwoFingerDist = currentDist;
-        lastTwoFingerMidpoint = currentMid;
+        camDistance = constrain(camDistance - (currentDist - lastTwoFingerDist) * 2, minDistance, maxDistance);
+        camAngleY   = constrain(camAngleY + (currentMid.y - lastTwoFingerMidpoint.y) * 0.005, minTilt, maxTilt);
+        camAngleX  += (currentMid.x - lastTwoFingerMidpoint.x) * 0.005;
+        _camDirty   = true;
+        lastTwoFingerDist      = currentDist;
+        lastTwoFingerMidpoint  = currentMid;
     }
     needsRedraw = true;
     return false;
@@ -486,15 +436,13 @@ function touchMoved() {
  * No state needs clearing here (touchStarted re-initialises on the next touch),
  * but the handler must exist and return false to prevent default scroll behaviour.
  */
-function touchEnded() {
-    return false;
-}
+function touchEnded() { return false; }
 
 /**
  * windowResized() — keeps the canvas filling the browser window when it is
  * resized or the phone is rotated. Triggers a redraw so the new size is shown.
  */
 function windowResized() {
-    resizeCanvas(windowWidth, windowHeight);
+    resizeCanvas(windowWidth, windowHeight);  // Always fill the full screen
     needsRedraw = true;
 }
