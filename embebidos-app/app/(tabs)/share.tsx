@@ -1,20 +1,15 @@
-import { Image } from "expo-image";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import io, { Socket } from "socket.io-client";
 import * as Location from "expo-location";
-import * as FileSystem from "expo-file-system/legacy";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
-import {
-    Platform,
-    StyleSheet,
-    Text,
-    View,
-    Button,
-    TouchableOpacity,
-} from "react-native";
+import { StyleSheet, Text, View, TouchableOpacity } from "react-native";
 
 const socketEndpoint = "https://embebidos-uumb.onrender.com";
 
+/**
+ *
+ * @returns La pantalla que comparte la ubicación
+ */
 export default function StreamScreen() {
     const [hasConnection, setConnection] = useState(false);
     const [isStreaming, setIsStreaming] = useState(false);
@@ -26,57 +21,79 @@ export default function StreamScreen() {
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
     const socketRef = useRef<Socket | null>(null);
+    const subscriberRef = useRef<Location.LocationSubscription | null>(null);
 
-    // Handle Socket Lifecycle
+    // Administración del socket
     useEffect(() => {
-        socketRef.current = io(socketEndpoint, {
-            transports: ["websocket"],
-        });
-
+        socketRef.current = io(socketEndpoint, { transports: ["websocket"] });
         const socket = socketRef.current;
-
         socket.on("connect", () => setConnection(true));
         socket.on("disconnect", () => setConnection(false));
 
         return () => {
-            socket.off("connect");
-            socket.off("disconnect");
             socket.disconnect();
         };
     }, []);
 
-    useEffect(() => {
-        let subscriber: Location.LocationSubscription | null = null;
+    // Obtiene la ubicacion del usuario
+    const startWatching = useCallback(async () => {
+        if (subscriberRef.current) return;
 
-        async function startWatching() {
-            let { status } = await Location.requestForegroundPermissionsAsync();
-            if (status !== "granted") {
-                setErrorMsg("Permission denied");
+        try {
+            const enabled = await Location.hasServicesEnabledAsync();
+            if (!enabled) {
+                setErrorMsg("GPS is turned off. Please enable it.");
                 return;
             }
-            subscriber = await Location.watchPositionAsync(
+
+            const { status: fgStatus } =
+                await Location.requestForegroundPermissionsAsync();
+            if (fgStatus !== "granted") {
+                setErrorMsg("Foreground permission denied");
+                return;
+            }
+
+            await Location.requestBackgroundPermissionsAsync();
+            setErrorMsg(null);
+
+            subscriberRef.current = await Location.watchPositionAsync(
                 {
                     accuracy: Location.Accuracy.High,
-                    timeInterval: 10000,
+                    timeInterval: 5000,
                     distanceInterval: 5,
                 },
                 (newLocation) => {
                     setLocation(newLocation);
                 },
             );
+        } catch (e: any) {
+            setErrorMsg("Waiting for GPS signal...");
+            console.log(e);
         }
-
-        startWatching();
-
-        return () => {
-            if (subscriber) subscriber.remove();
-        };
     }, []);
 
     useEffect(() => {
+        startWatching();
+        const checkInterval = setInterval(() => {
+            if (!location || errorMsg) {
+                startWatching();
+            }
+        }, 5000);
+
+        return () => {
+            clearInterval(checkInterval);
+            if (subscriberRef.current) {
+                subscriberRef.current.remove();
+                subscriberRef.current = null;
+            }
+        };
+    }, [location, errorMsg, startWatching]);
+
+    // Envia la ubicación
+    useEffect(() => {
         let interval: NodeJS.Timeout;
 
-        if ((isStreaming||isRecording) && location) {
+        if ((isStreaming || isRecording) && location) {
             interval = setInterval(() => {
                 const point = {
                     latitude: location.coords.latitude,
@@ -85,7 +102,6 @@ export default function StreamScreen() {
                     timestamp: location.timestamp,
                 };
 
-                // Logic A: Streaming (Send to Server)
                 if (isStreaming && socketRef.current?.connected) {
                     socketRef.current.emit("point", point);
                 }
@@ -99,28 +115,15 @@ export default function StreamScreen() {
             if (interval) clearInterval(interval);
         };
     }, [isRecording, isStreaming, location]);
+
     return (
         <View style={styles.container}>
             {!hasConnection ? (
-                <>
-                    <View>
-                        <Text style={[styles.paragraph, styles.header]}>
-                            Connecting to {socketEndpoint}...
-                        </Text>
-                        {errorMsg && (
-                            <Text
-                                style={[
-                                    styles.paragraph,
-                                    styles.header,
-                                    { color: "red" },
-                                ]}
-                            >
-                                {errorMsg}
-                            </Text>
-                        )}
-                    </View>
-                    
-                </>
+                <View>
+                    <Text style={[styles.paragraph, styles.header]}>
+                        Connecting to server...
+                    </Text>
+                </View>
             ) : (
                 <>
                     <Text style={styles.header}>Stream in real time</Text>
@@ -144,6 +147,7 @@ export default function StreamScreen() {
                     <Text>Connected to server</Text>
                 </>
             )}
+
             <Text style={styles.header}>Record and send</Text>
             <View style={{ flexDirection: "row" }}>
                 <TouchableOpacity
@@ -163,6 +167,7 @@ export default function StreamScreen() {
                         color={isRecording ? "white" : "black"}
                     />
                 </TouchableOpacity>
+
                 <TouchableOpacity
                     style={[
                         styles.recordButton,
@@ -172,9 +177,10 @@ export default function StreamScreen() {
                         },
                     ]}
                     onPress={() => {
-                        console.log(recordedPath);
-                        socketRef.current.emit("upload", recordedPath);
-                        setRecordedPath([]);
+                        if (socketRef.current) {
+                            socketRef.current.emit("upload", recordedPath);
+                            setRecordedPath([]);
+                        }
                     }}
                 >
                     <MaterialCommunityIcons
@@ -184,11 +190,19 @@ export default function StreamScreen() {
                     />
                 </TouchableOpacity>
             </View>
-            <Text style={styles.coordinates}>
-                {location
-                    ? `Lat: ${location.coords.latitude}\nLon: ${location.coords.longitude}\nAlt: ${location.coords.altitude}`
-                    : "Awaiting GPS..."}
-            </Text>
+
+            {/* Display error message or coordinates */}
+            {errorMsg ? (
+                <Text style={[styles.coordinates, { color: "red" }]}>
+                    {errorMsg}
+                </Text>
+            ) : (
+                <Text style={styles.coordinates}>
+                    {location
+                        ? `Lat: ${location.coords.latitude.toFixed(5)}\nLon: ${location.coords.longitude.toFixed(5)}\nAlt: ${location.coords.altitude?.toFixed(1) ?? 0}m`
+                        : "Awaiting GPS lock..."}
+                </Text>
+            )}
         </View>
     );
 }
@@ -206,19 +220,12 @@ const styles = StyleSheet.create({
         marginBottom: 20,
         marginHorizontal: 10,
     },
-    paragraph: {
-        fontSize: 16,
-    },
+    paragraph: { fontSize: 16 },
     coordinates: {
         fontSize: 18,
         fontWeight: "bold",
         textAlign: "center",
-        //fontFamily: Platform.OS === "ios" ? "Courier" : "monospace",
+        marginTop: 20,
     },
-    header: {
-        fontSize: 18,
-        fontWeight: "bold",
-        textAlign: "left",
-        margin: 10,
-    },
+    header: { fontSize: 18, fontWeight: "bold", textAlign: "left", margin: 10 },
 });

@@ -29,7 +29,7 @@ const db = admin.database();
 const pointsRef = db.ref('points');
 
 function listen() {
-  var host = "192.168.80.22";
+  var host = "localhost";
   var port = server.address().port;
   console.log("Example app listening at http://" + host + ":" + port);
 }
